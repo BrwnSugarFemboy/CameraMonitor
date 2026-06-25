@@ -1,0 +1,22 @@
+# --- Camera Monitor dependencies ---
+# Install with:  pip install -r requirements.txt
+# (add pyinstaller separately when building the exe:  pip install pyinstaller)
+
+# core capture + processing
+opencv-python>=4.9
+numpy>=1.26
+
+# web viewer, MJPEG, and WebSocket server
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# system virtual camera output
+pyvirtualcam>=0.13
+
+# optional: friendly device names in `--list-cameras` (Windows only).
+# Everything works without it; you just won't see camera names.
+pygrabber>=0.2
+
+# optional: Windows service support (`--install-service`). Windows only.
+# Not needed to run interactively.
+pywin32>=306
