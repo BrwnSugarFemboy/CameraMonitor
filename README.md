@@ -23,8 +23,7 @@ service.
 - **Virtual camera** — appears as a normal webcam in Zoom, Teams, OBS, browsers, etc. No OBS install required (bundles the Unity Capture filter).
 - **RTSP** (optional) — H.264 via a bundled FFmpeg + MediaMTX, readable in VLC / NVRs at `rtsp://<host>:8554/cam`.
 - **Single .exe** — packaged with PyInstaller; FFmpeg, MediaMTX, and the virtual-camera filter are bundled, so end users install nothing.
-- **Windows service** — installs itself into `C:\ProgramData\CameraMonitor`, auto-starts on boot, runs headless, and logs to a rotating file.
-- **Config file** — settings persist in `C:\ProgramData\CameraMonitor\config.json`.
+- **Unattended deployment** — run at login in your session, or as a headless Windows service (auto-start on boot), or both via a session bridge. Settings persist in `C:\ProgramData\CameraMonitor\config.json`.
 - **Diagnostics** — `--list-cameras` shows every device index, its resolution, and flags black frames (closed shutter / IR cam).
 - **Auto-reconnect** if the camera drops.
 
@@ -114,7 +113,12 @@ inside. Full details and troubleshooting: [PACKAGING.md](PACKAGING.md).
 |---|---|---|
 | Virtual camera (no OBS) | `CameraMonitor.exe --install-vcam` (admin, once) | [VIRTUALCAM.md](VIRTUALCAM.md) |
 | RTSP output | add `bin/ffmpeg.exe` + `bin/mediamtx.exe`, run with `--rtsp rtsp://localhost:8554/cam` | [PACKAGING.md](PACKAGING.md) |
-| Windows service + config file | `CameraMonitor.exe --install-service` (admin) | [SERVICE.md](SERVICE.md) |
+| Auto-start, service, headless, config file | login auto-start, Windows service, or service + bridge | [SERVICE.md](SERVICE.md) |
+
+> **Heads up:** the bundled virtual camera is a DirectShow device, so it appears
+> in Teams, Zoom, Discord, OBS, and browsers — but **not** the Windows Camera app
+> or other Media Foundation apps. See [SERVICE.md](SERVICE.md) for why and the
+> OBS-backend workaround.
 
 ## Configuration
 
@@ -149,6 +153,8 @@ the virtual camera under a service.
 | `--rtsp-fps / --rtsp-bitrate` | RTSP encode settings |
 | `--config <path>` / `--write-config` | Use / write the config file |
 | `--install-service` / `--uninstall-service` / `--start-service` / `--stop-service` | Windows service control (admin) |
+| `--install-startup` / `--uninstall-startup` / `--startup-status` | Login auto-start in your user session (no admin) |
+| `--vcam-bridge [url]` | Feed the virtual camera from a stream instead of the camera (use with a headless service) |
 | `--install-vcam` / `--uninstall-vcam` / `--check-vcam` | Virtual-camera registration (admin) |
 | `--list-cameras` / `--max-index <n>` | Enumerate camera indices and exit |
 

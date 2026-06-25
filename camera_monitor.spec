@@ -78,7 +78,7 @@ for fname in ("UnityCaptureFilter64.dll", "UnityCaptureFilter32.dll"):
 hiddenimports += [
     "config", "frame_source", "virtual_camera", "rtsp_publisher",
     "webserver", "viewer", "resources", "embedded_rtsp", "vcam_install",
-    "camera_list", "runner", "config_store", "service",
+    "camera_list", "runner", "config_store", "service", "startup",
 ]
 
 a = Analysis(
@@ -109,7 +109,7 @@ exe = EXE(
     upx=False,                 # UPX often trips antivirus; leave off
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,              # keep a console for logs + Ctrl+C; set False to hide
+    console=False,             # no console window (silent for end users)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -1,0 +1,40 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- PyInstaller build output ---
+build/
+dist/
+*.manifest
+
+# --- Bundled third-party binaries (download separately; see README) ---
+bin/ffmpeg.exe
+bin/mediamtx.exe
+vcam/UnityCaptureFilter32.dll
+vcam/UnityCaptureFilter64.dll
+
+# Keep bin/mediamtx.yml tracked (it's our config, not a binary).
+!bin/mediamtx.yml
+
+# --- Download archives / extraction leftovers ---
+*.7z
+*.zip
+files.zip
+
+# --- MediaMTX runtime artifacts ---
+auto.crt
+auto.key
+
+# --- Logs / local config ---
+*.log
+config.json
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

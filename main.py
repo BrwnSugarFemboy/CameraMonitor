@@ -17,8 +17,8 @@ import logging
 import multiprocessing
 
 from config_store import (default_config_path, load_config_file,
-                          resolve_config, write_config_file)
-from runner import AppRunner
+                          resolve_config, setup_logging, write_config_file)
+from runner import AppRunner, run_vcam_bridge
 
 log = logging.getLogger("main")
 
@@ -81,6 +81,15 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--stop-service", action="store_true", help="Stop the Windows service.")
     sv.add_argument("--run-as-service", action="store_true", help=argparse.SUPPRESS)
 
+    au = p.add_argument_group("login auto-start (your user session; no admin, virtual-camera-friendly)")
+    au.add_argument("--install-startup", action="store_true",
+                    help="Run at login in your desktop session (virtual camera works here). No admin needed.")
+    au.add_argument("--uninstall-startup", action="store_true", help="Remove the login auto-start entry.")
+    au.add_argument("--startup-status", action="store_true", help="Show whether login auto-start is enabled.")
+    au.add_argument("--vcam-bridge", nargs="?", const="", default=None, metavar="URL",
+                    help="User-session helper: feed the virtual camera from a stream instead of the "
+                         "camera (use alongside a headless service). Defaults to the local MJPEG URL.")
+
     g = p.add_argument_group("virtual camera setup (run once, then exit)")
     g.add_argument("--install-vcam", action="store_true",
                    help="Register the bundled OBS-free virtual camera (prompts for admin) and exit.")
@@ -123,11 +132,7 @@ def main() -> None:
         service.run_as_service()
         return
 
-    logging.basicConfig(
-        level=getattr(logging, (args.log_level or "info").upper()),
-        format="%(asctime)s  %(levelname)-7s %(name)-8s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    setup_logging(args.log_level or "info")
 
     # Virtual-camera setup, then exit.
     if args.install_vcam or args.uninstall_vcam or args.check_vcam:
@@ -144,6 +149,22 @@ def main() -> None:
     if args.list_cameras:
         import camera_list
         camera_list.list_cameras(max_index=args.max_index, backend=args.backend or "auto")
+        return
+
+    # Login auto-start (user session), then exit.
+    if args.install_startup or args.uninstall_startup or args.startup_status:
+        import startup
+        if args.install_startup:
+            extra = ""
+            if args.vcam_bridge is not None:
+                extra = "--vcam-bridge"
+                if args.vcam_bridge:  # an explicit URL was given
+                    extra += f' "{args.vcam_bridge}"'
+            startup.install(extra)
+        elif args.uninstall_startup:
+            startup.uninstall()
+        else:
+            startup.status()
         return
 
     # Resolve settings: defaults < config file < CLI.
@@ -173,6 +194,12 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"Service command failed: {exc}")
             print("Tip: run this from an *administrator* terminal.")
+        return
+
+    # Virtual-camera bridge mode (user session, feeds vcam from the local stream).
+    if args.vcam_bridge is not None:
+        url = args.vcam_bridge or f"http://localhost:{cfg.port}/stream.mjpg"
+        run_vcam_bridge(url, cfg)
         return
 
     # Normal interactive run (Ctrl+C to quit).

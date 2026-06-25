@@ -28,18 +28,31 @@ _DLL32 = "UnityCaptureFilter32.dll"
 _IS_WINDOWS = sys.platform.startswith("win")
 
 
-def _vcam_dir() -> str:
+def _bundle_vcam_dir() -> str:
+    """Where the DLLs ship (a temp _MEI dir in a frozen build, ./vcam from source)."""
     return resource_path("vcam")
 
 
-def dll_paths():
-    d = _vcam_dir()
+def _persistent_vcam_dir() -> str:
+    """Stable on-disk location the filter is registered from and loaded by apps."""
+    from config_store import app_data_dir
+    return os.path.join(app_data_dir(), "vcam")
+
+
+def _bundle_dlls():
+    d = _bundle_vcam_dir()
+    return os.path.join(d, _DLL64), os.path.join(d, _DLL32)
+
+
+def _installed_dlls():
+    d = _persistent_vcam_dir()
     return os.path.join(d, _DLL64), os.path.join(d, _DLL32)
 
 
 def filters_present() -> bool:
-    d64, d32 = dll_paths()
-    return os.path.exists(d64) or os.path.exists(d32)
+    """True if the DLLs are available to install (in the bundle/source)."""
+    b64, b32 = _bundle_dlls()
+    return os.path.exists(b64) or os.path.exists(b32)
 
 
 def is_admin() -> bool:
@@ -98,17 +111,43 @@ if _IS_WINDOWS:
         return True
 
 
-def _regsvr_cmds(unregister: bool):
+def _regsvr_paths():
     sysroot = os.environ.get("SystemRoot", r"C:\Windows")
-    regsvr64 = os.path.join(sysroot, "System32", "regsvr32.exe")  # 64-bit
-    regsvr32 = os.path.join(sysroot, "SysWOW64", "regsvr32.exe")  # 32-bit
-    d64, d32 = dll_paths()
-    flag = "/u /s" if unregister else "/s"
+    return (os.path.join(sysroot, "System32", "regsvr32.exe"),    # 64-bit
+            os.path.join(sysroot, "SysWOW64", "regsvr32.exe"))    # 32-bit
+
+
+def _install_cmds():
+    """Copy the bundled DLLs to a permanent dir, then register them from there.
+
+    Done in one elevated batch so the copy lands in ProgramData (admin-writable)
+    and the registry records a stable path, not the temporary _MEI extraction
+    path that PyInstaller deletes when the exe exits.
+    """
+    regsvr64, regsvr32 = _regsvr_paths()
+    b64, b32 = _bundle_dlls()
+    i64, i32 = _installed_dlls()
+    dst_dir = _persistent_vcam_dir()
+    cmds = [f'mkdir "{dst_dir}" 2>nul']
+    if os.path.exists(b64):
+        cmds.append(f'copy /Y "{b64}" "{i64}"')
+        cmds.append(f'"{regsvr64}" /s "{i64}"')
+    if os.path.exists(b32):
+        cmds.append(f'copy /Y "{b32}" "{i32}"')
+        cmds.append(f'"{regsvr32}" /s "{i32}"')
+    return cmds
+
+
+def _uninstall_cmds():
+    regsvr64, regsvr32 = _regsvr_paths()
+    i64, i32 = _installed_dlls()
     cmds = []
-    if os.path.exists(d64):
-        cmds.append(f'"{regsvr64}" {flag} "{d64}"')
-    if os.path.exists(d32) and os.path.exists(regsvr32):
-        cmds.append(f'"{regsvr32}" {flag} "{d32}"')
+    if os.path.exists(i64):
+        cmds.append(f'"{regsvr64}" /u /s "{i64}"')
+        cmds.append(f'del /Q "{i64}"')
+    if os.path.exists(i32):
+        cmds.append(f'"{regsvr32}" /u /s "{i32}"')
+        cmds.append(f'del /Q "{i32}"')
     return cmds
 
 
@@ -139,14 +178,17 @@ def install() -> bool:
         print("  sudo modprobe v4l2loopback devices=1 card_label='Camera Monitor'")
         return False
     if not filters_present():
-        print(f"Virtual-camera filter DLLs not found in: {_vcam_dir()}")
+        print(f"Virtual-camera filter DLLs not found in: {_bundle_vcam_dir()}")
         print("Download UnityCaptureFilter64.dll and UnityCaptureFilter32.dll from")
         print("  https://github.com/schellingb/UnityCapture")
-        print("and place them in that folder (or bundle them via the .spec).")
+        print("and place them in a 'vcam' folder (or bundle them via the .spec).")
         return False
-    ok = _run_elevated(_regsvr_cmds(unregister=False))
-    print(f'Virtual camera registered as "{DEVICE_NAME}".' if ok
-          else "Registration failed or was cancelled at the UAC prompt.")
+    ok = _run_elevated(_install_cmds())
+    if ok:
+        print(f'Virtual camera registered as "{DEVICE_NAME}".')
+        print(f"  installed to: {_persistent_vcam_dir()}")
+    else:
+        print("Registration failed or was cancelled at the UAC prompt.")
     return ok
 
 
@@ -154,7 +196,11 @@ def uninstall() -> bool:
     if not _IS_WINDOWS:
         print("On Linux: sudo modprobe -r v4l2loopback")
         return False
-    ok = _run_elevated(_regsvr_cmds(unregister=True))
+    cmds = _uninstall_cmds()
+    if not cmds:
+        print("Virtual camera does not appear to be installed.")
+        return True
+    ok = _run_elevated(cmds)
     print("Virtual camera removed." if ok
           else "Removal failed or was cancelled at the UAC prompt.")
     return ok

@@ -10,7 +10,10 @@ Precedence when the app resolves its settings:
 from __future__ import annotations
 
 import json
+import logging
+import logging.handlers
 import os
+import sys
 from typing import Optional
 
 from config import Config
@@ -39,6 +42,33 @@ def default_config_path() -> str:
 
 def log_dir() -> str:
     return os.path.join(app_data_dir(), "logs")
+
+
+def setup_logging(level: str = "info") -> None:
+    """Configure logging so it works whether or not the app has a console.
+
+    Always writes to a rotating file in ProgramData; adds a console handler only
+    when a real stderr exists (i.e. a console build). This lets you build with
+    `console=False` for a silent end-user app without losing logs or crashing on
+    a missing stderr.
+    """
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    fmt = logging.Formatter("%(asctime)s  %(levelname)-7s %(name)-8s %(message)s", "%H:%M:%S")
+
+    if getattr(sys, "stderr", None) is not None:
+        sh = logging.StreamHandler()
+        sh.setFormatter(fmt)
+        root.addHandler(sh)
+
+    try:
+        os.makedirs(log_dir(), exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(
+            os.path.join(log_dir(), "app.log"), maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except Exception:
+        pass
 
 
 def load_config_file(path: Optional[str]) -> dict:

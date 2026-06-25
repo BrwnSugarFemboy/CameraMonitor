@@ -1,4 +1,23 @@
-# Config file + running as a Windows service
+# Deployment, config file, and the Windows service
+
+This covers how to run Camera Monitor unattended and where its settings live.
+There are three deployment modes — pick the one that matches your goal.
+
+## Which mode do I want?
+
+| Goal | Mode |
+|---|---|
+| Just try it / run while you're at the keyboard | **Interactive** |
+| Virtual camera in Teams/Zoom/browser on *this* PC, auto-start at login | **Login auto-start** |
+| Headless box, runs before/without login, feed consumed over the network | **Service** |
+| Headless box **and** virtual camera once a user logs in | **Service + bridge** |
+
+The key constraint behind all of this: a Windows **service runs in session 0**,
+where a virtual camera is **invisible** to normal desktop apps. So a service can
+serve web/RTSP headless, but it cannot itself provide a usable virtual camera.
+The "bridge" mode below works around that.
+
+---
 
 ## Where settings live
 
@@ -9,129 +28,137 @@ C:\ProgramData\CameraMonitor\config.json
 ```
 
 Priority order (later wins): **built-in defaults → config file → command-line flags.**
-So the service (which runs with no flags) is driven entirely by that file, while
-you can still override anything on the command line for testing.
-
-### Create / update the config
-
-The easiest way is to pass the settings you want once and let the app write them:
+A service or auto-start entry runs with no flags, so it is driven entirely by the
+file. Create/update it by passing the settings you want once:
 
 ```powershell
 CameraMonitor.exe --source 0 --rtsp rtsp://localhost:8554/cam --label FRONT-DOOR --write-config
 ```
 
-That produces `C:\ProgramData\CameraMonitor\config.json`:
+You can hand-edit the file afterward (it's picked up on next start). `source` may
+be a number like `0` or a string URL. Use a different file with
+`--config "D:\some\path.json"` on any command.
 
-```json
-{
-  "source": 0,
-  "backend": "auto",
-  "label": "FRONT-DOOR",
-  "host": "0.0.0.0",
-  "port": 8000,
-  "stream_fps": 20.0,
-  "jpeg_quality": 80,
-  "vcam_enabled": true,
-  "rtsp_url": "rtsp://localhost:8554/cam",
-  "rtsp_fps": 25.0,
-  "...": "..."
-}
-```
+---
 
-You can hand-edit that file afterward; the service picks it up on next start.
-(`source` may be a number like `0` or a string URL like `"rtsp://..."`.)
-
-Use a different file with `--config "D:\some\path.json"` on any command.
-
-## Install the service
-
-The service support uses pywin32, which is bundled into the exe. Run these from
-an **administrator** terminal (right-click → "Run as administrator"):
+## Mode 1 — Interactive
 
 ```powershell
-CameraMonitor.exe --install-service     # registers it, auto-start on boot,
-                                        # and saves current settings to config.json
+CameraMonitor.exe --source 0 --rtsp rtsp://localhost:8554/cam
+```
+
+Runs everything (capture, web, virtual camera, RTSP) while the window is open.
+Ctrl+C to stop. Best for testing.
+
+## Mode 2 — Login auto-start (virtual camera on this PC)
+
+Runs the full app in **your** desktop session at login, so the virtual camera is
+visible to Teams/Zoom/browsers. No admin, not a scheduled task — it uses the
+per-user HKCU Run key.
+
+```powershell
+CameraMonitor.exe --install-vcam                  # once, admin (registers the camera)
+CameraMonitor.exe --source 0 --rtsp rtsp://localhost:8554/cam --write-config
+CameraMonitor.exe --install-startup               # run at login, in your session
+```
+
+Manage it: `--startup-status`, `--uninstall-startup`. To start it now without
+logging out: just run `CameraMonitor.exe`.
+
+## Mode 3 — Service (headless, network only)
+
+Runs at boot with nobody logged in. Serves web + RTSP. **Turn the virtual camera
+off** — nothing in session 0 can see it.
+
+```powershell
+CameraMonitor.exe --source 0 --rtsp rtsp://localhost:8554/cam --no-vcam --write-config
+CameraMonitor.exe --install-service               # admin
 CameraMonitor.exe --start-service
 ```
 
+Consume the feed from another machine at `http://<box-ip>:8000/` or
+`rtsp://<box-ip>:8554/cam`.
+
 On install the exe **copies itself to `C:\ProgramData\CameraMonitor\CameraMonitor.exe`**
-and registers the service against that copy. So the service no longer depends on
-where you ran it from — you can delete the original `dist\` folder and the
-service keeps working across reboots. Re-running `--install-service` (e.g. after
-a rebuild) stops the old service, refreshes that copy, and re-registers.
+and registers the service against that copy, so it no longer depends on where you
+ran it from (you can delete `dist\`). Re-running `--install-service` after a
+rebuild refreshes that copy. Verify the path with `sc qc CameraMonitor`.
 
-Check it:
+Manage it: `--stop-service`, `--uninstall-service` (which also deletes the copied
+exe unless it's the one currently running).
+
+> All `*-service` commands need an **administrator** terminal — they talk to the
+> Service Control Manager. "Access is denied"/"failed" means you're not elevated.
+
+## Mode 4 — Service + bridge (headless boot **and** virtual camera at login)
+
+This is how you get both at once. The trick: only the **service** opens the
+camera; a tiny **bridge** in the user session reads the service's local stream
+and pushes it into the virtual camera, so the two never contend for the device.
 
 ```powershell
-sc query CameraMonitor
-sc qc CameraMonitor      # shows BINARY_PATH_NAME -> ...\ProgramData\CameraMonitor\CameraMonitor.exe
+# Service owns the camera + serves web/RTSP, virtual camera OFF:
+CameraMonitor.exe --source 0 --rtsp rtsp://localhost:8554/cam --no-vcam --write-config
+CameraMonitor.exe --install-service        # admin
+
+# Login bridge feeds the virtual camera from the local stream (opens no camera):
+CameraMonitor.exe --install-startup --vcam-bridge
 ```
 
-It now starts automatically on boot, runs headless (no console), and Windows
-runs it without anyone logging in.
+At boot the service serves the feed over `localhost`; when a user logs in, the
+bridge connects to `http://localhost:8000/stream.mjpg` and drives the virtual
+camera in that session. (localhost works across sessions, which is what makes
+this possible.)
 
-Stop / remove:
+The bridge defaults to the local MJPEG URL on your configured port. For best
+quality you can point it at RTSP instead:
+`--install-startup --vcam-bridge "rtsp://localhost:8554/cam"`.
 
-```powershell
-CameraMonitor.exe --stop-service
-CameraMonitor.exe --uninstall-service
-```
+> Don't run Mode 2 and Mode 3/4 together — Mode 2's full app and the service would
+> both open the physical camera and fight over it. The bridge exists precisely so
+> Mode 4 avoids that.
 
-`--uninstall-service` also deletes the copied exe in ProgramData (unless you
-happen to run that copy itself, since a running exe can't delete itself — in that
-case it tells you to remove the file manually).
+---
 
-> All four service commands need administrator rights — they talk to the Windows
-> Service Control Manager. If you see "Access is denied" or "failed", you're not
-> in an elevated terminal.
+## The Windows Camera app (and other Media Foundation apps)
+
+The bundled virtual camera (Unity Capture) is a **DirectShow** device. The
+Windows **Camera app**, Windows Hello-style apps, and some newer apps use
+**Media Foundation**, which cannot see DirectShow virtual cameras — so the camera
+won't appear there (it shows no device / no switcher). This is a Windows API
+split, not a bug, and it applies to every mode above.
+
+Apps that **do** see it: Teams, Zoom, Discord, OBS, and most browsers
+(DirectShow). If you specifically need the Windows Camera app or other Media
+Foundation apps, the practical option is the **OBS Virtual Camera** (install OBS
+28+, run once, then `--vcam-backend obs`) — it registers a Media Foundation
+camera on Windows 11, at the cost of the OBS dependency.
 
 ## Logs
 
-A service has no console, so it logs to a rotating file:
+Interactive/auto-start runs log to `C:\ProgramData\CameraMonitor\logs\app.log`;
+the service logs to `...\logs\service.log`. Both rotate. Service start/stop/error
+events also go to the Windows Event Viewer (Application log, source
+"CameraMonitor").
 
-```
-C:\ProgramData\CameraMonitor\logs\service.log
-```
+## Silent (no console) builds
 
-Start there if the service starts but the feed isn't working. Service
-start/stop/error events are also written to the Windows **Event Viewer**
-(Windows Logs → Application, source "CameraMonitor").
-
-## Updating settings while installed
-
-1. `CameraMonitor.exe --stop-service`
-2. edit `config.json` (or re-run `--write-config` with new flags)
-3. `CameraMonitor.exe --start-service`
-
-## A note on the virtual camera + services
-
-A Windows service runs in an isolated session (session 0) with no desktop. The
-**web and RTSP outputs work fine** there. The **virtual camera** may not be
-visible to apps running in your normal desktop session, because virtual cameras
-are session-scoped. If your goal is "feed available to Zoom/Teams on this PC,"
-the virtual camera is better run interactively in your user session (or via the
-Task Scheduler option below, set to run in your session). For a headless
-appliance serving web/RTSP to other machines, the service is ideal — consider
-adding `vcam_enabled: false` to the config in that case.
+For an end-user/auto-start deployment, build with `console=False` in
+`camera_monitor.spec` so no window appears at login. Logs still go to `app.log`
+(the app detects the missing console and routes logging to file only). Keep
+`console=True` for your own debugging builds.
 
 ## If the native service gives you trouble
 
-Two reliable alternatives that need no code:
+Two no-code alternatives:
 
-**NSSM** (Non-Sucking Service Manager) wraps the exe as a service without any of
-the pywin32 machinery:
-
-```powershell
-nssm install CameraMonitor "C:\path\to\CameraMonitor.exe"
-nssm start CameraMonitor
-```
-
-**Task Scheduler** ("run whether logged on or not", trigger "At startup") gets
-you boot-start without a true service, and keeps the process in a session where
-the virtual camera is visible. Simplest if the virtual camera matters.
+- **NSSM** wraps the exe as a service without the pywin32 machinery:
+  `nssm install CameraMonitor "C:\ProgramData\CameraMonitor\CameraMonitor.exe"`.
+- **Task Scheduler** ("at log on", "run only when user is logged on") is an
+  alternative to `--install-startup` for the in-session case.
 
 ## Build note
 
-The spec already lists pywin32's hidden imports (including `win32timezone`, the
-one PyInstaller classically misses). Just make sure `pip install pywin32` ran in
-the environment you build from, then `pyinstaller camera_monitor.spec --clean`.
+The spec lists pywin32's hidden imports (including `win32timezone`, the one
+PyInstaller classically misses). Ensure `pip install pywin32` ran in your build
+environment, then `pyinstaller camera_monitor.spec --clean`.

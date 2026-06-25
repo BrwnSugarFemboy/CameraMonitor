@@ -89,9 +89,9 @@ class AppRunner:
             log.info("RTSP:      %s", cfg.rtsp_url)
 
         uv = dict(app=app, host=cfg.host, port=cfg.port, log_level=cfg.log_level)
-        if self.service_mode:
-            # No console in a service: don't let uvicorn attach stdout/stderr
-            # handlers (they can be invalid and crash startup).
+        if self.service_mode or getattr(sys, "stderr", None) is None:
+            # No console (service or windowed build): don't let uvicorn attach
+            # stdout/stderr handlers, which would be invalid and crash startup.
             uv["log_config"] = None
         self.server = uvicorn.Server(uvicorn.Config(**uv))
         return self.server
@@ -121,3 +121,33 @@ class AppRunner:
             self.vcam.stop()
         if self.source:
             self.source.stop()
+
+
+def run_vcam_bridge(url: str, cfg):
+    """User-session helper: read a stream (the local service's feed) and push it
+    into the virtual camera, WITHOUT opening the physical camera.
+
+    This is what lets a headless service (which owns the camera in session 0) and
+    a per-user virtual camera coexist: only the service touches the device; this
+    bridge just relays its stream into the session-visible virtual camera.
+    """
+    import time
+    from frame_source import FrameSource
+    from virtual_camera import VirtualCameraWriter
+
+    log.info("Virtual-camera bridge: %s  ->  virtual camera", url)
+    source = FrameSource(url)  # a URL source, not a camera index
+    source.start()
+    vcam = VirtualCameraWriter(
+        source, fps=cfg.vcam_fps or cfg.fps or 30.0,
+        device=cfg.vcam_device, backend=cfg.vcam_backend,
+    )
+    vcam.start()
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        vcam.stop()
+        source.stop()
